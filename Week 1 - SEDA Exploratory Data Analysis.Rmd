@@ -1,0 +1,200 @@
+---
+title: |
+  <center> S-052: Intermediate and Advanced Statistical Methods </center>
+  <center> for Applied Educational Research </center>
+  <center> Spring, 2021 </center>
+author: "Sarah Brashear"
+date: "Last Modified: 1/23/21"
+output: html_document
+---
+
+###RQ:  RQ: What is the relationship between district SES and educational opportunity?
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Load in packages
+```{r packages, warning = FALSE, message = FALSE}
+require(plyr)
+require(dplyr)
+require(ggplot2)
+require(lme4)
+require(foreign)
+require(gridExtra)
+```
+
+
+##Define the local directory
+```{r setwd}
+setwd("~/Harvard/RSSS/S052/Spring2021/")
+```
+
+
+##Load the data:Data prepared from public Stanford Education Data Archive <br/>
+\ \ Available at https://exhibits.stanford.edu/data/catalog/db586ns4974 <br/>
+\ \ Documentation: https://stacks.stanford.edu/file/druid:db586ns4974/SEDA_documentation_v30_09212019.pdf
+
+```{r importdata}
+dat <- read.dta("SEDA19.dta")
+
+```
+
+
+##Review Variables
+```{r summaries}
+summary(dat)
+dat[1:10,]
+```
+
+
+##Tabulate
+```{r tabulate}
+dat %>%
+  group_by(stateabb) %>%
+  summarize(mean = mean(meanavg, na.rm = TRUE),
+            stddev = sd(meanavg, na.rm = TRUE),
+            n_NA = n(), #this will give you the total number, even with NAs
+            n = sum(!is.na(meanavg))) #and this will give you total number of non-NAs
+```
+
+
+##Exploratory Data Analysis
+```{r explore}
+#Histogram of SES and average test scores
+ggplot(dat, aes(x = sesavgall)) +
+  geom_histogram(aes(y = stat(count)/sum(stat(count)))) +
+  ylab("Percent")
+  #Note the syntax looks a tad complicated, but this is essentially trying to force R to give us a histogram that shows "percents", rather than the straightforward "counts". To do this, we essentially tell R to put on the y-axis the count, divided by the total count. If you don't really care about percents, see the mn_asmts syntax below
+ggplot(dat, aes(x = meanavg)) +
+  geom_histogram(aes(y = stat(count)/sum(stat(count)))) +
+  ylab("Percent")
+
+#Skewed histogram of test scores (math + ela) per grade
+ggplot(dat, aes(x = mn_asmts)) + geom_histogram()
+
+#Beginning scatterplot of average test scores on SES
+ggplot(dat, aes(x = sesavgall, y = meanavg)) + geom_point()
+
+#Standard scatterplot
+ggplot(dat, aes(x = sesavgall, y = meanavg)) +
+  geom_point(size = 0.1) +
+  xlab("District Socioeconomic Status (z)") +
+  ylab("District Achievement (Avg Grade Level = 5.5, 2009-2016)")
+
+#Fancy scatterplot (optional)
+dat <- dat %>%
+  mutate(plotrange = sesavgall > -4 & sesavgall < 2.5 & meanavg > 1)
+
+dat %>%
+  filter(plotrange == TRUE) %>%
+  ggplot(aes(x = sesavgall, y = meanavg)) +
+  geom_point(aes(size = mn_asmts), pch = 21, color = "black", fill = "gray") +
+  geom_smooth(method = "lm", col = "black", lwd = 0.5) +
+  geom_hline(aes(yintercept = 5.5), color = "gray", lty = 2, lwd = 1) +
+  geom_vline(aes(xintercept = 0), color = "gray", lty = 2, lwd = 1) +
+  scale_x_continuous(breaks = c(-4:2.5)) +
+  scale_y_continuous(breaks = c(1:9)) +
+  scale_size_continuous(range = c(1,20)) +
+  xlab("<------------- Lower -------- District Socioeconomic Status -------- Higher ------>") +
+  ylab("Avg. District Achievement (Grade Levels), 2009-2016") +
+  theme(legend.position = "none",
+        panel.background = element_rect(fill = "white", color = "black"))
+
+#Fancy scatterplot with marginal histograms (optional)
+piece_scatter <- dat %>%
+  filter(plotrange == TRUE) %>%
+  ggplot(aes(x = sesavgall, y = meanavg)) +
+  geom_point(aes(size = mn_asmts), pch = 21, color = "black", fill = "gray") +
+  geom_smooth(method = "lm", col = "black", lwd = 0.5) +
+  geom_hline(aes(yintercept = 5.5), color = "gray", lty = 2, lwd = 1) +
+  geom_vline(aes(xintercept = 0), color = "gray", lty = 2, lwd = 1) +
+  scale_x_continuous(breaks = c(-4:2.5)) +
+  scale_y_continuous(breaks = c(1:9)) +
+  scale_size_continuous(range = c(1,20)) +
+  xlab("<------------- Lower -------- District Socioeconomic Status -------- Higher ------>") +
+  ylab("Avg. District Achievement (Grade Levels), 2009-2016") +
+  theme(legend.position = "none",
+        panel.background = element_rect(fill = "white", color = "black"))
+
+piece_xhist <- dat %>%
+  filter(plotrange == TRUE) %>%
+  ggplot(aes(x = sesavgall)) +
+  geom_histogram() +
+  scale_x_continuous(breaks = c(-4:2.5)) +
+  scale_y_reverse(breaks = c(0, 500, 1000)) +
+  theme(panel.background = element_rect(fill = "white")) +
+  xlab("District Socioeconomic Status") +
+  ylab("Frequency")
+
+piece_yhist <- dat %>%
+  filter(plotrange == TRUE) %>%
+  ggplot(aes(x = meanavg)) +
+  geom_histogram() +
+  scale_x_continuous(breaks = c(1:9)) +
+  scale_y_reverse(breaks = c(0, 600, 1200)) +
+  coord_flip() +
+  theme(panel.background = element_rect(fill = "white")) +
+  xlab("Avg. District Achievement (Grade Levels), 2009-2016") +
+  ylab("Frequency")
+
+
+grid.arrange(grobs = list(piece_yhist, piece_scatter, piece_xhist),
+             widths = c(1, 3),
+             heights = c(2, 1),
+             layout_matrix = rbind(c(1, 2),
+                                   c(NA, 3)))
+  #This is about as close as I can get to Andrew's plot in Stata without seriously digging into some of the ggplot extension packages
+```
+
+
+## Basic Inference
+```{r inference}
+#Standard deviation vs. standard error of the mean
+sd(dat$meanavg, na.rm = TRUE)
+summary(lm(meanavg ~ 1, data = dat))
+
+#Simple linear regression, unweighted and unadjusted
+summary(lm(meanavg ~ sesavgall, data = dat))
+
+#District-level correlation, unweighted and unadjusted
+cor.test(dat$meanavg , dat$sesavgall, use = "complete")
+```
+
+
+## Learning Submission #1
+```{r submission}
+#Q1:
+dat %>%
+  filter(leaid == "XXXXXXXX") #Replace X with your NCES District ID	
+
+
+#Q2:
+subdat <- dat %>%
+  filter(stateabb == "XX") #Replace XX with a two-letter state abbreviation
+summary(subdat$meanavg)
+summary(subdat$sesavgall)
+
+myses <- ggplot(subdat, aes(x = sesavgall)) +
+  geom_histogram(aes(y = stat(count)/sum(stat(count)))) +
+  ylab("Percent")
+myses
+
+myavg <- ggplot(subdat, aes(x = meanavg)) +
+  geom_histogram(aes(y = stat(count) / sum(stat(count)))) +
+  ylab("Percent")
+myavg
+
+
+#Q3:
+myscatter <- ggplot(subdat, aes(x = sesavgall, y = meanavg)) +
+  geom_point()
+myscatter
+cor(subdat$meanavg, subdat$sesavgall, use = "complete")
+
+
+#Q4:
+summary(lm(meanavg ~ 1, data = subdat))
+summary(lm(meanavg ~ sesavgall, data = subdat))
+```
