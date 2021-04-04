@@ -1,0 +1,209 @@
+---
+title: |
+  <center> S-052: Intermediate and Advanced Statistical Methods </center>
+  <center> for Applied Educational Research </center>
+  <center> Spring, 2021 </center>
+author: "Sarah Brashear"
+date: "Last Modified: 3/7/21"
+output: html_document
+---
+
+###RQ:  What is the relationship between academic opportunity and future college graduation for Black, Hispanic, and non-Black/non-Hispanic students in high school in 1979?
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Load in packages
+```{r packages, warning = FALSE, message = FALSE}
+require(haven)
+require(tidyverse)
+require(stargazer)
+```
+
+
+
+##Define the local directory
+```{r setwd}
+setwd("~/Harvard/RSSS/S052/Spring2021/week7")
+```
+
+##Import Data
+```{r importdata}
+dat <- read_dta("NLSY79 College Graduation.dta")
+
+raceethlabeller <- c("Non-Black, Non-Hispanic Students", "Black Students", "Hispanic Students")
+names(raceethlabeller) <- c(0, 1, 2)
+```
+
+
+##Graduation rates by 3-way coding of student race/ethnicity
+```{r 3way}
+#by subgroup
+dat %>%
+  group_by(raceeth) %>%
+  summarize(mean = mean(colgrad, na.rm = TRUE),
+            sd = sd(colgrad, na.rm = TRUE),
+            freq = sum(!is.na(colgrad)))
+#total
+dat %>%
+  summarize(mean = mean(colgrad, na.rm = TRUE),
+            sd = sd(colgrad, na.rm = TRUE),
+            freq = sum(!is.na(colgrad)))
+
+
+dat %>%
+  ggplot(aes(x = afqt, y = stat(density))) +
+  geom_histogram() + 
+  facet_wrap(~raceeth, nrow = 3, labeller = labeller(raceeth = raceethlabeller)) +
+  xlab("Standardized AFQT Score (z)") +
+  ggtitle("hist")
+```
+
+
+##Assessing the fit of relationships between AFQT and Graduation by 3-way coding 
+```{r fitassess}
+#Create bins
+dat$afqtbin <- cut(dat$afqt, breaks = seq(-3.25, 2.25, by = .5)) #Cuts data into bins
+levels(dat$afqtbin) <- c(seq(-3, 2, by = .5)) #Label bins by their midpoints
+dat$afqtbin <- as.numeric(as.character(dat$afqtbin))
+table(dat$afqtbin)
+
+#Graduation rates by bin for all students
+dat <- dat %>%
+  group_by(afqtbin) %>%
+  mutate(binall = mean(colgrad, na.rm = TRUE),
+         binszall = sum(!is.na(colgrad)))
+
+#EK edit: Note that the code below was written to produce a dataset parallel to the Stata version. A more efficient way to do the following in R would be as follows:
+# dat %>%
+#   group_by(afqtbin, raceeth) %>%
+#   mutate(binre = mean(colgrad, na.rm = TRUE),
+#          binszre = sum(!is.na(colgrad)))
+
+
+#Graduation rates by bin for non-Black, non-Hispanic students
+dat <- left_join(dat,
+                  dat %>%
+                    filter(nonbh == 1) %>%
+                    group_by(afqtbin) %>%
+                    mutate(binnonbh = mean(colgrad, na.rm = TRUE),
+                           binsznbh = sum(!is.na(colgrad))))
+
+dat <- left_join(dat,
+                 dat %>%
+                    filter(black == 1) %>%
+                    group_by(afqtbin) %>%
+                    mutate(binblack = mean(colgrad, na.rm = TRUE),
+                           binszblack = sum(!is.na(colgrad))))
+
+dat <- left_join(dat,
+                 dat %>%
+                    filter(hispanic == 1) %>%
+                    group_by(afqtbin) %>%
+                    mutate(binhispanic = mean(colgrad, na.rm = TRUE),
+                           binszhispanic = sum(!is.na(colgrad))))
+
+#Relationship for all students
+ggplot(dat, aes(y = binall, x = afqtbin, size = binszall)) +
+  geom_point() +
+  theme(legend.position = "none") +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0,1)) +
+  ylab("Proportion Graduating College") +
+  xlab("Standardized AFQT Score (z)") +
+  ggtitle("scatterall")
+
+# Relationship for all subgroups
+ggplot(dat, aes(x = afqtbin)) +
+  geom_point(aes(y = binnonbh, size = binsznbh^2, color = "NonBH")) + #Note I "square" size to make differences appear more dramatic, which is more aligned to the State output
+  geom_point(aes(y = binblack, size = binszblack^2, color = "Black")) +
+  geom_point(aes(y = binhispanic, size = binszhispanic^2, color = "Hispanic")) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0,1)) +
+  guides(size = FALSE) +
+  ylab("Proportion Graduating College") +
+  xlab("Standardized AFQT Score (z)") +
+  ggtitle("scattersub")
+
+#Linear fit to the relationship for subgroups
+ggplot(dat, aes(x = afqtbin)) +
+  geom_point(aes(y = binnonbh, size = binsznbh^2, color = "NonBH")) +
+  geom_smooth(aes(y = colgrad, x = afqt, color = "NonBH"), method = "lm", se = FALSE, data = filter(dat, nonbh == 1), xseq = seq(-.7, 2, length = 80)) +
+  geom_point(aes(y = binblack, size = binszblack^2, color = "Black")) +
+  geom_smooth(aes(y = colgrad, x = afqt, color = "Black"), method = "lm", se = FALSE, data = filter(dat, black == 1), xseq = seq(-1.4, 2, length = 80)) +
+  geom_point(aes(y = binhispanic, size = binszhispanic^2, color = "Hispanic")) +
+  geom_smooth(aes(y = colgrad, x = afqt, color = "Hispanic"), method = "lm", se = FALSE, data = filter(dat, hispanic == 1), xseq = seq(-1.4, 2, length = 80)) +
+  guides(size = FALSE) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0,1)) +
+  ylab("Proportion Graduating College") +
+  xlab("Standardized AFQT Score (z)") +
+  ggtitle("linear")
+
+
+#Fitting a logistic regression model
+modlogit <- glm(colgrad ~ black*afqt + hispanic*afqt, data = dat, family = "binomial")
+summary(modlogit)
+dat$modlogit_probs <- predict(modlogit, newdata = select(dat, black,hispanic,afqt), type = "response")
+dat$modlogit_logodds <- predict(modlogit, newdata = select(dat, black,hispanic,afqt))
+
+#Logistic fit to the relationship for subgroups
+ggplot(dat, aes(x = afqtbin)) +
+  geom_point(aes(y = binnonbh, size = binsznbh^2, color = "NonBH")) +
+  geom_smooth(aes(y = modlogit_probs, x = afqt, color = "NonBH"), se = FALSE, data = filter(dat, nonbh == 1)) +
+  geom_point(aes(y = binblack, size = binszblack^2, color = "Black")) +
+  geom_smooth(aes(y = modlogit_probs, x = afqt, color = "Black"), se = FALSE, data = filter(dat, black == 1)) +
+  geom_point(aes(y = binhispanic, size = binszhispanic^2, color = "Hispanic")) +
+  geom_smooth(aes(y = modlogit_probs, x = afqt, color = "Hispanic"), se = FALSE, data = filter(dat, hispanic == 1)) +
+  guides(size = FALSE) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0,1)) +
+  ylab("Proportion Graduating College") +
+  xlab("Standardized AFQT Score (z)") +
+  ggtitle("logistic")
+
+```
+
+
+##Model Building
+```{r modbuild}
+mod1 <- glm(colgrad ~ black + hispanic, data = dat, family = "binomial")
+summary(mod1)
+neg2ll_1 <- mod1$deviance
+mod2 <- glm(colgrad ~ black + hispanic + afqt, data = dat, family = "binomial")
+summary(mod2)
+neg2ll_2 <- mod1$deviance
+mod3 <- glm(colgrad ~ afqt, data = filter(dat, nonbh == 1), family = "binomial")
+summary(mod3)
+neg2ll_3 <- mod1$deviance
+mod4 <- glm(colgrad ~ afqt, data = filter(dat, black == 1), family = "binomial")
+summary(mod4)
+neg2ll_4 <- mod1$deviance
+mod5 <- glm(colgrad ~ afqt, data = filter(dat, hispanic == 1), family = "binomial")
+summary(mod5)
+neg2ll_5 <- mod1$deviance
+mod6 <- glm(colgrad ~ black*afqt + hispanic*afqt, data = dat, family = "binomial")
+summary(mod6)
+neg2ll_6 <- mod1$deviance
+
+lapply(list(mod1, mod2, mod3), FUN = function(x) 1 - x$deviance/x$null.deviance)
+
+#Model building table including deviances and pseudo-R-squared
+stargazer(mod1, mod2, mod3, mod4, mod5, mod6, type = "text",
+          add.lines = list(c("neg2ll", round(c(mod1$deviance, mod2$deviance, mod3$deviance, mod4$deviance, mod5$deviance, mod6$deviance), 2)),
+                           c("r2pseudo", round(unlist(lapply(list(mod1, mod2, mod3, mod4, mod5, mod6), FUN = function(x) 1 - x$deviance/x$null.deviance)), 4))))
+
+#Fitted log-odds
+ggplot(data = dat, aes(x = afqt, y = modlogit_logodds)) +
+  geom_smooth(aes(color = "NonBH"), data = filter(dat, nonbh == 1)) +
+  geom_smooth(aes(color = "Black"), data = filter(dat, black == 1)) +
+  geom_smooth(aes(color = "Hispanic"), data = filter(dat, hispanic == 1)) +
+  geom_hline(aes(yintercept = 0)) +
+  geom_vline(aes(xintercept = 0)) +
+  scale_y_continuous(breaks = seq(-5, 4, by = 1), limits = c(-5,4)) +
+  scale_x_continuous(breaks = seq(-1.5, 2, by = 0.5), limits = c(-1.5,2)) +
+  ylab("Log Odds of Graduating College") +
+  xlab("Standardized AFQT Score (z)") +
+  ggtitle("logits")
+
+lrtest(mod6, mod3)
+```
+

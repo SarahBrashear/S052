@@ -1,0 +1,191 @@
+---
+title: |
+  <center> S-052: Intermediate and Advanced Statistical Methods </center>
+  <center> for Applied Educational Research </center>
+  <center> Spring, 2021 </center>
+author: "Sarah Brashear"
+date: "Last Modified: 2/20/21"
+output: html_document
+---
+
+###RQ1: What is the relationship between district socioeconomic status and district achievement in US school districts?
+###RQ2: What is the causal effect of own-party identification on viewing time for online ads?
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Load in packages
+```{r packages, warning = FALSE, message = FALSE}
+require(foreign)
+require(haven)
+require(tidyverse)
+require(stargazer)
+require(car)
+```
+
+
+##Define the local directory
+```{r setwd}
+setwd("~/Harvard/RSSS/S052/Spring2021/week5")
+```
+
+
+##RQ1 Data: Nonlinear relationships in SEDA Data
+```{r importdata1}
+dat_seda <- read.dta("SEDA19.dta")
+dat_seda$sesavg2 <- dat_seda$sesavgall*dat_seda$sesavgall
+dat_seda$sesavg3 <- dat_seda$sesavgall*dat_seda$sesavg2
+```
+
+
+```{r nonlinear}
+#Linear Fit
+mod1 <- lm(meanavg ~ sesavgall, data = dat_seda, na.action = "na.exclude")
+summary(mod1)
+
+dat_seda$mod1_pred <- predict(mod1)
+
+#Setting the plot range
+dat_seda$range <- dat_seda$sesavgall < 3 & dat_seda$sesavgall > -4 & dat_seda$meanavg > 1 & dat_seda$meanavg < 10
+  #EK: note this doesn't really make difference for the code below, but will make the variable consistent with the Stata version of the variable
+dat_seda$range[is.na(dat_seda$range)] <- FALSE
+
+dat_seda %>%
+  filter(range == TRUE) %>%
+  ggplot(aes(x = sesavgall)) +
+  geom_point(aes(y = meanavg), size = 0.1, color = "darkblue") +
+  geom_smooth(aes(y = mod1_pred), color = "black") +
+  geom_vline(aes(xintercept = 0), color = "red") +
+  scale_y_continuous(breaks = 1:10) +
+  ylab("District Average Test Score, 2009-2016") +
+  xlab("District Socioeconomic Status") +
+  ggtitle("Linear Fit")
+
+
+#Quadratic Fit
+mod2 <- lm(meanavg ~ sesavgall + sesavg2, data = dat_seda, na.action = "na.exclude")
+summary(mod2)
+
+dat_seda$mod2_pred <- predict(mod2)
+
+dat_seda %>%
+  filter(range == TRUE) %>%
+  ggplot(aes(x = sesavgall)) +
+  geom_point(aes(y = meanavg), size = 0.1, color = "darkblue") +
+  geom_smooth(aes(y = mod2_pred), color = "red") +
+  geom_vline(aes(xintercept = 0), color = "red") +
+  scale_y_continuous(breaks = 1:10) +
+  ylab("District Average Test Score, 2009-2016") +
+  xlab("District Socioeconomic Status") +
+  ggtitle("Quadratic Fit")
+
+
+#Cubic Fit
+mod3 <- lm(meanavg ~ sesavgall + sesavg2 + sesavg3, data = dat_seda, na.action = "na.exclude")
+summary(mod3)
+
+dat_seda$mod3_pred <- predict(mod3)
+
+dat_seda %>%
+  filter(range == TRUE) %>%
+  ggplot(aes(x = sesavgall)) +
+  geom_point(aes(y = meanavg), size = 0.1, color = "darkblue") +
+  geom_smooth(aes(y = mod3_pred), color = "blue") +
+  geom_vline(aes(xintercept = 0), color = "red") +
+  scale_y_continuous(breaks = 1:10) +
+  ylab("District Average Test Score, 2009-2016") +
+  xlab("District Socioeconomic Status") +
+  ggtitle("Cubic Fit")
+
+
+#Model building table
+stargazer(mod1, mod2, mod3, type = "text", column.labels = c("Linear", "Quadratic", "Cubic"), title = "Nonlinear relationships between SES and achievement in US districts", star.char = c("*", "**", "***"), star.cutoffs = c(0.05, 0.01, 0.001), notes = c("*p<0.05; **p<0.01; ***p<0.001"), notes.append = F)
+
+
+dat_seda %>%
+  filter(range == TRUE) %>%
+  ggplot(aes(x = sesavgall)) +
+  geom_point(aes(y = meanavg), size = 0.1, color = "darkblue") +
+  geom_smooth(aes(y = mod1_pred, color = "Linear")) +
+  geom_smooth(aes(y = mod2_pred, color = "Quadratic")) +
+  geom_smooth(aes(y = mod3_pred, color = "Cubic")) +
+  geom_vline(aes(xintercept = 0), color = "red") +
+  scale_y_continuous(breaks = 1:10) +
+  scale_color_discrete(name = "", breaks = c("Linear", "Quadratic", "Cubic")) +
+  ylab("District Average Test Score, 2009-2016") +
+  xlab("District Socioeconomic Status") +
+  ggtitle("AllPlots")
+```
+
+
+##RQ2 Data: Thanks to Luis Campos and Luke Miratrix for this data story
+```{r importdata2}
+dat_ads <- read_dta("OnlineAds.dta")
+```
+
+#Exploratory Data Analysis
+```{r explore}
+ggplot(dat_ads, aes(x = seconds)) + geom_histogram() + xlab("Viewing time (seconds)") + ylab("Frequency")
+
+dat_ads %>%
+  group_by(republic, partyid) %>%
+  summarize(avg_seconds = mean(seconds),
+            group_count = n(),
+            median_seconds = median(seconds))
+
+dat_ads$fourway <- dat_ads %>%
+  mutate(lbl1 = ifelse(republic == 0,
+                       "Democrat",
+                       "Republican"),
+         lbl2 = ifelse(partyid == 0,
+                       ", no ID",
+                       ", ID"),
+         outlbl = paste0(lbl1, lbl2)) %>%
+  pull() %>%
+  as.factor()
+
+dat_ads$fourway <- factor(dat_ads$fourway, levels = levels(dat_ads$fourway)[c(2,1,4,3)]) #reordering to match Stata output
+
+ggplot(dat_ads, aes(x = seconds, y = stat(density)*1000)) + geom_histogram(bins = 43) + facet_wrap(~fourway) + ylab("Percent") + xlab("Viewing time (seconds)") + ggtitle("seconds")
+
+dat_ads %>%
+  mutate(fourway = factor(fourway, levels = levels(dat_ads$fourway)[c(1,3,2,4)])) %>%
+  ggplot(aes(y = seconds)) + geom_boxplot() + facet_wrap(~fourway, ncol = 4) + theme(axis.text.x = element_blank()) + ylab("Viewing time (seconds)")
+```
+
+#Log Transformation
+```{r log}
+dat_ads$logsec = log(dat_ads$seconds)
+
+ggplot(dat_ads, aes(x = logsec, y = stat(density)*1000)) + geom_histogram(bins = 43) + facet_wrap(~fourway) + ylab("Percent") + ggtitle("logseconds")
+
+dat_ads %>%
+  mutate(fourway = factor(fourway, levels = levels(dat_ads$fourway)[c(1,3,2,4)])) %>%
+  ggplot(aes(y = logsec)) + geom_boxplot() + facet_wrap(~fourway, ncol = 4) + theme(axis.text.x = element_blank())
+```
+
+#Separate and joint estimation of causal effects
+```{r causal}
+dat_ads$partyid <- as_factor(dat_ads$partyid)
+dat_ads$republic <- as_factor(dat_ads$republic)
+
+mod1 <- lm(logsec ~ partyid, data = filter(dat_ads, republic == "Democrat"))
+summary(mod1)
+
+mod2 <- lm(logsec ~ partyid, data = filter(dat_ads, republic == "Republican"))
+summary(mod2)
+
+mod3 <- lm(logsec ~ partyid*republic, data = dat_ads)
+summary(mod3)
+
+stargazer(mod1, mod2, mod3, type = "text", column.labels = c("Dem", "Rep", "Full"), title = "Effect of own-party identification on viewing time in log-seconds", star.char = c("*", "**", "***"), star.cutoffs = c(0.05, 0.01, 0.001), notes = c("*p<0.05; **p<0.01; ***p<0.001"), notes.append = F)
+
+
+#Re-testing the effect for Republicans in the full model
+coef(mod3) # To understand how R identifies coefficients
+linearHypothesis(mod3, "partyidInformed + partyidInformed:republicRepublican", test = "F", verbose = T)
+  #Note the combined "estimate" is found under "Estimated linear function..."
+  #The associated standard error is indirectly given by "Estimated variance of linear..."; you need to take the squareroot to get to the standard error itself
+```

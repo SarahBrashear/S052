@@ -1,0 +1,153 @@
+---
+title: |
+  <center> S-052: Intermediate and Advanced Statistical Methods </center>
+  <center> for Applied Educational Research </center>
+  <center> Spring, 2021 </center>
+author: "Sarah Brashear"
+date: "Last Modified: 3/27/21"
+output: html_document
+---
+
+###RQ: In which states are districts scoring higher than expected given SES?
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Load in packages
+```{r packages, warning = FALSE, message = FALSE}
+require(foreign)
+require(tidyverse)
+require(lme4)
+require(stargazer)
+```
+
+
+##Define the local directory
+```{r setwd}
+setwd("~/Harvard/RSSS/S052/Spring2021/week9")
+```
+
+##Import Data
+```{r importdata}
+dat <- read.dta("SEDA19.dta")
+```
+
+##Step 1: Exploratory Data Analysis of SEDA SES relationships
+```{r explore}
+#Drop DC and HI which each have only have 1 school district.
+dat <- dat %>%
+  filter(stateabb != "DC", stateabb != "HI")
+
+#Set plot range data
+dat$plotrange <- (dat$sesavgall < 3)  & (dat$sesavgall > -4) & (dat$meanavg > 1) & (dat$meanavg < 10)
+
+#Trellis plot illustrating separate regression lines by state
+dat %>%
+  filter(plotrange == TRUE) %>%
+  ggplot(aes(x = sesavgall, y = meanavg)) +
+  geom_point(size = 0.5) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~stateabb) +
+  xlab("District Socioeconomic Status") +
+  ylab("District Average Test Score, 2009-2016") +
+  ggtitle("trellis")
+
+#Calculating intercepts and slopes for each state
+dat <- dat %>%
+  group_by(stateabb) %>%
+  mutate(intercept = coef(lm(meanavg ~ sesavgall))[1],
+         slope = coef(lm(meanavg ~ sesavgall))[2])
+
+#Predicted average test scores for each district given SES
+dat$predicted <- dat$intercept + dat$slope*dat$sesavgall
+
+#Overlaid linear fit
+ggplot(dat, aes(x = sesavgall, y = predicted, group = stateabb)) + geom_smooth() + 
+  scale_y_continuous(breaks = 1:9) +
+  xlab("District Socioeconomic Status") +
+  ylab("District Average Test Score, 2009-2016") +
+  ggtitle("overlaid")
+```
+
+
+##Step 2: Building multilevel regression models
+```{r mlm}
+#Establish a binary variable for states that had growing public school enrollments from 2009 to 2016.
+#Data from https://nces.ed.gov/programs/digest/d19/tables/dt19_203.20.asp
+dat$growing <- 0
+
+dat$growing[dat$stateabb %in% c("AL", "CT", "IL", "ME", "MI", "MS", "MO", "NH", "NY", "OH", "PA", "RI", "VT", "WV", "WI")] <- 1
+
+
+#Model 0: Optional baseline model to establish a baseline log-likelihood
+mod0 <- lmer(meanavg ~ (1|stateabb), data = filter(dat, !is.na(sesavgall)), REML = FALSE)
+summary(mod0)
+
+#Model 1: Fixed intercepts model to fit within-state slopes
+mod1 <- lm(meanavg ~ sesavgall + stateabb, data = dat)
+summary(mod1)
+
+#Model 2: Random intercepts model
+mod2 <- lmer(meanavg ~ sesavgall + (1|stateabb), data = dat, REML = FALSE)
+summary(mod2)
+
+#Model 3: Random intercepts model with level-2 predictor
+mod3 <- lmer(meanavg ~ sesavgall + growing + (1|stateabb), data = dat, REML = FALSE)
+summary(mod3)
+
+
+#note neg2ll doesn't coem out of mod1, so we have to craft the input a bit
+neg2ll <- round(as.numeric(unlist(lapply(list(mod0, mod2, mod3), FUN = function(x) getME(x, "devcomp")$cmp['dev']))), 2)
+neg2ll <- c("", neg2ll)
+neg2ll <- neg2ll[c(2, 1, 3, 4)]
+
+
+#same with sigam2_u and sigma2_e
+temp <- do.call(rbind, lapply(list(mod0, mod2, mod3), FUN = function(x) data.frame(VarCorr(x))))
+sigma2_u <- round(temp$vcov[c(1, 3, 5)], 3)
+sigma2_u <- c("", sigma2_u)
+sigma2_u <- sigma2_u[c(2, 1, 3, 4)]
+
+sigma2_e <- round(temp$vcov[c(2, 4, 6)], 3)
+sigma2_e <- c("", sigma2_e)
+sigma2_e <- sigma2_e[c(2, 1, 3, 4)]
+
+#Generate model building tables
+stargazer(mod0, mod1, mod2, mod3, type = "text",
+          column.labels = paste("Model", 0:3),
+          model.numbers = FALSE,
+          keep = c("sesavgall", "growing", "Constant"),
+          keep.stat = c("n"),
+          add.lines = list(c("neg2ll", neg2ll),
+                           c("sigma2u", sigma2_u),
+                           c("sigma2e", sigma2_e)))
+
+
+#Model 4: Fixed effects model with level 2 predictor. Why does this fail?	
+mod4 <- lm(meanavg ~ stateabb + sesavgall + growing, data = dat)
+summary(mod4)
+```
+
+
+##Supplementary visualization: A caterpillar plot to visualize random intercepts
+```{r supp}
+#Fit a mixed model equivalent to Model 3 and save random intercepts
+summary(mod2)
+temp <- ranef(mod2, condVar = TRUE)
+randeffs <- data.frame(state = row.names(temp$stateabb),
+                       int = as.numeric(unlist(temp$stateabb)),
+                       stderr = as.numeric(sqrt(data.frame(attr(temp$stateabb, "postVar")))))
+randeffs$rank <- rank(randeffs$int)
+
+ggplot(randeffs, aes(x = rank, y = int)) +
+  geom_text(aes(label = state, y = int + 2*stderr), nudge_y = 0.07, angle = 90) +
+  geom_errorbar(aes(ymax = int + 2*stderr, ymin = int - 2*stderr)) +
+  geom_point(size = 2) +
+  geom_hline(aes(yintercept = 0), col = "red") +
+  xlab("Rank") +
+  ylab("Random state intercept with 95% CI, in grade levels") +
+  ggtitle("caterpillar")
+```
+

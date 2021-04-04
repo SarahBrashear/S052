@@ -1,0 +1,263 @@
+---
+title: |
+  <center> S-052: Intermediate and Advanced Statistical Methods </center>
+  <center> for Applied Educational Research </center>
+  <center> Spring, 2021 </center>
+author: "Sarah Brashear"
+date: "Last Modified: 3/21/21"
+output: html_document
+---
+
+###RQ:  Are there differential attrition rates between females and non-females in a Computer Science Massive Open Online Course?
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Load in packages
+```{r packages, warning = FALSE, message = FALSE}
+require(haven)
+require(tidyverse)
+require(stargazer)
+```
+
+
+##Define the local directory
+```{r setwd}
+setwd("~/Harvard/RSSS/S052/Spring2021/week8")
+```
+
+##Import Data
+```{r importdata}
+dat <- read_dta("AttritionCSMOOC.dta")
+```
+
+
+##Custom lifetab function
+```{r}
+#The lifetable functions designed for R that I found were either very clunky and/or gave contradictory results to Stata because of some philosophical disagreements on the continuity of time. To save some headache, I just wrote a new function that will perfectly recreate the Stata output.
+#Do not use this function in non-S052 contexts. I did not vet this, and do not guarantee its accuracy outside of the examples used in S052.
+func_S052lifetab <- function(data,
+                             timecol,
+                             eventcol){
+  data <- data.frame(data)
+  if(sum(!(as.numeric(sort(unique(data[,timecol]))) %in%
+           as.numeric(1:length(unique(data[,timecol]))))) == 0){
+    rowprecursor <- 1:length(unique(data[,timecol]))
+  }else{
+    print("ERROR; TIME VARIABLE NOT INITIALIZED PROPERLY")
+    stop()
+  }
+  
+  temptab <- table(data[,timecol],data[,eventcol])
+  out <- data.frame(interval = paste(rowprecursor, 2:(length(rowprecursor)+1)))
+  out$Beg.Total <- nrow(data)
+  out$Beg.Total <- out$Beg.Total - c(0,cumsum(rowSums(temptab))[-length(rowSums(temptab))])
+  out$Deaths <- temptab[,2]
+  out$Lost <- temptab[,1]
+  out$Hazard <- out$Deaths/out$Beg.Total
+  out$Haz.Std.Err <- sqrt((1 - out$Hazard)*(out$Hazard)/(out$Beg.Total - out$Deaths))
+  out$Survival <- (out$Beg.Total - out$Deaths)/(out$Beg.Total)
+  out$Survival <- cumprod(out$Survival)
+  out$Sur.Std.Err <- out$Survival*sqrt(cumsum(out$Deaths/(out$Beg.Total*(out$Beg.Total - out$Deaths))))
+  out$Cum.Failure <- 1 - out$Survival
+  return(out)
+}
+```
+
+
+##Step 1: Review of certification rates (Learning Submission 4)
+```{r step1}
+#Certification rates by gender
+mytab <- table(dat$cert, dat$female)
+names(dimnames(mytab)) <- c("Certification", "Female")
+dimnames(mytab)[[2]] <- c("Non-female", "Female")
+dimnames(mytab)[[1]] <- c("Not certified", "Certified")
+mytab
+prop.table(mytab, 2)
+
+#Logistic regression to evaluate population disparities.
+mod <- glm(cert ~ female, data = dat, family = "binomial")
+summary(mod)
+  #Coefficients are in logits (log-odds units)
+```
+
+
+##Step 2: Life tables (hazard and survival probabilities)
+```{r step2}
+ltab <- func_S052lifetab(dat, "relweek", "dropped") #hazard and survival probabilities
+ltab
+
+#Descriptive data about survival times
+  #total observations
+  nrow(dat)
+  #subjects
+  length(unique(dat$userid))
+  #failures in single-failure-per-subject data
+  sum(dat$dropped)
+  #total analysis time at risk and under observation
+  sum(dat$relweek)
+    #at risk from t = ...
+    min(dat$relweek[dat$dropped == 1]) - 1
+    #earliest observed entry t = ...
+    min(dat$relweek) - 1
+    #last observed exit t = ...
+    max(dat$relweek[dat$dropped == 1])
+
+  #generate a hazard probability for each participant for their relative week
+  #EK: note that this isn't technically required to make the following plots, the way that it is in Stata
+dat$hazardp <- ltab$Hazard[dat$relweek]
+
+#Hazard function with connected lines to visualize the pattern
+ggplot(ltab, aes(x = 1:nrow(ltab), y = Hazard)) + geom_point() + geom_line() +
+  scale_x_continuous(breaks = 1:nrow(ltab)) +
+  xlab("Number of Periods in Trial") +
+  ylab("Hazard Probability") +
+  ggtitle("hazard")
+
+#generate a survival probability for each participant for their relative week
+  #EK: note that this isn't technically required to make the following plots, the way that it is in Stata
+dat$survivep <- ltab$Survival[dat$relweek]
+
+#A survival function, plotted appropriately as with Kaplan-Meier "drops" in each discrete bin.
+ggplot(ltab, aes(x = 1:nrow(ltab), y = Survival)) + geom_point() + geom_step() +
+  scale_y_continuous(breaks = seq(0, 1, .1), limits = c(0,1)) +
+  scale_x_continuous(breaks = 1:nrow(ltab)) +
+  xlab("Relative Week of Last Activity (< 18)") +
+  ylab("Survival Probability") +
+  ggtitle("survivalp")
+
+
+#Estimated median survival time
+  #EK: note this is a super lazy way of calculating median survival time that's narrowly passable in this context. Do not try to generalize this code to other survival analysis contexts.
+min(which(ltab$Survival < 0.5))
+```
+
+
+##Step 3: Start again, convert from a person-level dataset to a person-period dataset
+```{r step3}
+dat <- read_dta("AttritionCSMOOC.dta")
+
+#Duplicate rows by duration
+dat <- dat %>%
+  uncount(relweek, .remove = FALSE) #uncount() by default removes the used variable; we need it for later, so set .remove to FALSE
+
+#Count/label each appearance of a row
+dat <- dat %>%
+  group_by(userid) %>%
+  mutate(period = seq_along(userid))
+
+#Create an "exit" variable that indicates that they experienced the "event"
+dat$exit <- 0 #start by saying every row did not experience the event
+dat$exit <- (dat$period == dat$relweek)*dat$dropped #identify specifically the rows that did experience the event
+```
+
+
+##Step 4: Building the discrete-time hazard model
+```{r step4}
+dat$period_cat <- as.factor(dat$period) #Create a categorical version of "period" for ease of use
+
+#Model 1
+mod1 <- glm(exit ~ 1, data = dat, family = "binomial")
+summary(mod1)
+
+#Model 2
+mod2 <- glm(exit ~ period_cat, data = dat, family = "binomial")
+summary(mod2)
+dat$mod2_prob <- predict(mod2, type = "response")
+
+#Model 3
+mod3 <- glm(exit ~ period_cat + female, data = dat, family = "binomial")
+summary(mod3)
+dat$mod3_prob <- predict(mod3, type = "response")
+dat$mod3_logit <- predict(mod3)
+
+stargazer(mod1, mod2, mod3, type = "text",
+          add.lines = list(c("neg2ll", round(c(mod1$deviance, mod2$deviance, mod3$deviance), 2)),
+                           c("r2pseudo", round(unlist(lapply(list(mod1, mod2, mod3), FUN = function(x) 1 - x$deviance/x$null.deviance)), 4))))
+```
+
+
+##Step 5: Graphing fitted discrete-time hazard models
+```{r step5}
+#Create a friendlier version of the "female" variable so R doesn't get so easily confused
+dat$female_cat <- c("non-female", "female")[dat$female + 1]
+
+#Speed up graphing by plotting one dot per week-by-gender category
+  #EK: Note this is typically a Stata hack; R can usually get around this by summarizing the info, but "tagging" unique lines is a decent trick to have up one's sleeve so:
+dat$weekftag <- !duplicated(paste(dat$period, dat$female))
+table(dat$weekftag)
+
+#Fitted hazard probabilities. Weekly indicator variables allow these to equal sample probabilities.
+dat %>%
+  filter(weekftag) %>%
+  ggplot(aes(y = mod2_prob, x = period)) + geom_point() + geom_line() +
+  ylab("Hazard Probability") +
+  xlab("Relative Week") +
+  scale_x_continuous(breaks = 1:max(dat$period)) +
+  ggtitle("m2hazardp")
+
+#Fitted hazard probabilities by gender category from Model 3
+dat %>%
+  filter(weekftag) %>%
+  ggplot(aes(y = mod3_prob, x = period, group = female_cat, color = female_cat)) + geom_point() + geom_line() +
+  ylab("Hazard Probability") +
+  xlab("Relative Week") +
+  scale_x_continuous(breaks = 1:max(dat$period)) +
+  ggtitle("m3hazardp")
+
+#Fitted harzard logits by gender category from Model 3.
+dat %>%
+  filter(weekftag) %>%
+  ggplot(aes(y = mod3_logit, x = period, group = female_cat, color = female_cat)) + geom_point() + geom_line() +
+  ylab("Hazard Probability") +
+  xlab("Relative Week") +
+  scale_x_continuous(breaks = 1:max(dat$period)) +
+  ggtitle("m3hazardp")
+```
+
+
+##Survival probabilities
+```{r survprob}
+#Obtain and graph fitted survival probabilities from Model 3.  
+#A coding hack. Remember that the sum of logs is the log of a product.
+  #EK: Again, probably a cleaner way to accomplish this in R, but a nice demonstration of coding
+
+#The log of the within-bin survival probability (NOT the survival probability)
+dat$log1minush <- log(1 - dat$mod3_prob)
+
+#This is a trick to get the desired fitted product (sum of logs)
+dat <- dat %>%
+  group_by(userid) %>%
+  mutate(log_surv = cumsum(log1minush))
+
+dat$mod3_survivep <- exp(dat$log_surv)#Now we obtain the fitted survival probabilities as the products of previous within-bin survival probabilities.
+
+#Fitted survival probabilities
+dat %>%
+  filter(weekftag) %>%
+  ggplot(aes(y = mod3_survivep, x = period, group = female_cat, color = female_cat)) + geom_point() + geom_step() +
+  ylab("Fitted Survival Probabilities") +
+  xlab("Relative Week") +
+  scale_x_continuous(breaks = 1:max(dat$period)) +
+  scale_y_continuous(breaks = seq(0, 1, .1), limits = c(0,1)) +
+  ggtitle("m3survivep")
+
+#If desired, a hack to appropriately plot Kaplan-Meier "drops" in each discrete bin starting from 100%.
+bind_rows(dat,
+          data.frame(mod3_survivep = 1,
+                     period = 0,
+                     weekftag = TRUE,
+                     female_cat = c("female", "non-female"))) %>%
+  filter(weekftag) %>%
+  ggplot(aes(y = mod3_survivep, x = period, group = female_cat, color = female_cat)) + geom_point() + geom_step() +
+  ylab("Fitted Survival Probabilities") +
+  xlab("Relative Week") +
+  scale_x_continuous(breaks = 1:max(dat$period)) +
+  scale_y_continuous(breaks = seq(0, 1, .1), limits = c(0,1)) +
+  ggtitle("m3survivep")
+
+```
+
+

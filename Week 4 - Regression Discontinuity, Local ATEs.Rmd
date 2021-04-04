@@ -1,0 +1,118 @@
+---
+title: |
+  <center> S-052: Intermediate and Advanced Statistical Methods </center>
+  <center> for Applied Educational Research </center>
+  <center> Spring, 2021 </center>
+author: "Sarah Brashear"
+date: "Last Modified: 2/14/21"
+output: html_document
+---
+
+###RQ: Does the intent to reduce class size increase average reading scores?
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Load in packages
+```{r packages, warning = FALSE, message = FALSE}
+require(foreign)
+require(tidyverse)
+require(rdrobust)
+```
+
+
+##Define the local directory
+```{r setwd}
+setwd("~/Harvard/RSSS/S052/Spring2021/week4")
+```
+
+
+##Load the data: Data from Angrist & Lavy (1999) Using Maimonides' Rule...
+\ Article: https://economics.mit.edu/files/8273
+\ As discussed by Murnane & Willett (2010) Chapter 9
+\ Available at: https://stats.idre.ucla.edu/stata/examples/methods-matter/chapter9/
+```{r importdata}
+dat <- read.dta("angristlavy.dta")
+```
+
+
+##Question 1: Exploratory Data Analysis on the Running Variable and Outcome
+```{r q1}
+ggplot(dat, aes(x = size)) + geom_histogram(binwidth = 1) + geom_vline(xintercept = 41, color = "red")
+
+dat <- filter(dat, size >= 10 & size <= 70)
+
+ggplot(dat, aes(x = size)) + geom_histogram(binwidth = 1, fill = "lightgreen", color = "limegreen") + geom_vline(xintercept = 41, color = "red") + ggtitle("histsize")+ ylab("Number of classrooms") + xlab("size of september enrollment cohort")
+
+ggplot(dat, aes(group = size, y = read)) + geom_boxplot(width = 20) + ylab("verbal score (class average)")
+
+mod1 <- lm(read ~ as.factor(size), data = dat)
+summary(mod1)
+dat$mod1_pred <- predict(mod1)
+
+ggplot(dat, aes(x = size, y = mod1_pred)) + geom_point() + geom_vline(xintercept = 41, color = "red") + xlab("size of september enrollment cohort") + ylab("Linear prediction") + ggtitle("meanscatter")
+```
+
+
+##Question 2: First difference
+```{r q2}
+dat$csize = dat$size - 41
+dat$small = dat$csize >= 0
+
+mod2 <- lm(read ~ small, data = filter(dat, csize == 0 | csize == -1))
+summary(mod2)
+```
+
+
+##Question 3: Adjusted difference vs. Interacted difference
+```{r q3}
+dat$bandwidth5 = dat$size >= 36 & dat$size <= 46
+
+mod3 <- lm(read ~ small + csize, data = filter(dat, bandwidth5 == 1))
+summary(mod3)
+
+mod4 <- lm(read ~ small*csize, data = filter(dat, bandwidth5 == 1))
+summary(mod4)
+
+ggplot() +
+  geom_point(aes(x = csize, y = mod1_pred), data = filter(dat, bandwidth5 == 1)) +
+  geom_smooth(aes(x = csize, y = read), method = "lm", se = F, color = "brown", xseq = -5:0, data = filter(dat, bandwidth5 == 1, csize < 0)) +
+  geom_smooth(aes(x = csize, y = read), method = "lm", se = F, color = "darkgreen", data = filter(dat, bandwidth5 == 1, csize >= 0)) +
+  geom_vline(xintercept = 0, color = "red") +
+  scale_x_continuous(breaks = -5:5) +
+  scale_y_continuous(breaks = (34:39)*2) +
+  xlab("Centered September Class Size Variable") +
+  ylab("Average Classroom Reading Scores")
+```
+
+
+
+##Question 4: Expanded bandwidth
+```{r q4}
+dat$bandwidth12 <- dat$size >= 29 & dat$size <= 53
+
+mod5 <- lm(read ~ small*csize, data = filter(dat, bandwidth12 == 1))
+summary(mod5)
+
+
+ggplot() +
+  geom_point(aes(x = csize, y = mod1_pred), data = filter(dat, bandwidth12 == 1)) +
+  geom_smooth(aes(x = csize, y = read), method = "lm", se = F, color = "brown", xseq = -12:0, data = filter(dat, bandwidth12 == 1, csize < 0)) +
+  geom_smooth(aes(x = csize, y = read), method = "lm", se = F, color = "darkgreen", data = filter(dat, bandwidth12 == 1, csize >= 0)) +
+  geom_vline(xintercept = 0, color = "red") +
+  xlab("Centered September Class Size Variable") +
+  ylab("Average Classroom Reading Scores")
+```
+
+
+##Question 5: Robust Regression Discontinuity (Calonico, Cattaneo, & Titiunik, 2014)
+```{r q5}
+myrdplot <- rdplot(dat$read, dat$csize)
+summary(rdrobust(dat$read, dat$csize, masspoints = "off"))
+plotout <- myrdplot$rdplot
+plotout + xlab("") + ylab("") + ggtitle("Regression Function Fit") + geom_text(aes(x = 16, y = 66), label = "Polynomial fit of order 4", size = 5) + geom_text(aes(x = -20, y = 66), label = "Points are sample \n average within bin", size = 5)
+summary(myrdplot)
+```
+

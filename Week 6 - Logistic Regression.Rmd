@@ -1,0 +1,113 @@
+---
+title: |
+  <center> S-052: Intermediate and Advanced Statistical Methods </center>
+  <center> for Applied Educational Research </center>
+  <center> Spring, 2021 </center>
+author: "Sarah Brashear"
+date: "Last Modified: 2/28/21"
+output: html_document
+---
+
+###RQ: Are there differential attrition rates between females and non-females in a Computer Science Massive Open Online Course?
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Load in packages
+```{r packages, warning = FALSE, message = FALSE}
+require(haven)
+require(tidyverse)
+require(lmtest)
+require(sandwich)
+```
+
+
+
+##Define the local directory
+```{r setwd}
+setwd("~/Harvard/RSSS/S052/Spring2021/week6")
+```
+
+##Import Data
+```{r importdata}
+dat <- read_dta("AttritionCSMOOC.dta")
+```
+
+
+#Q1: Cross-tabulations enabling calculation of percents, odds, and odds ratios
+```{r Q1}
+mytab <- table(dat$cert, dat$female)
+names(dimnames(mytab)) <- c("Certification", "Female")
+dimnames(mytab)[[2]] <- c("Non-female", "Female")
+dimnames(mytab)[[1]] <- c("Not certified", "Certified")
+mytab
+```
+
+
+#Q2: Fitting a logistic regression model and plotting fitted values
+```{r Q2}
+mod_logit <- glm(cert ~ female, data = dat, family = "binomial") # Coefficients are in logits (log-odds units)
+summary(mod_logit)
+```
+
+
+#Optional:
+Pedagogical visualization of the logistic relationship fitted to two points.
+A "dial" fitted to a "switch."
+Coding notes: Jitter randomly scatters overlaid categorical points that would otherwise be indistinguishable. Higher values create more scatter.
+The 'coef(mod_logit)' commands use stored values from the logistic model above so must be run after fitting the logit model.
+```{r optional}
+dat$preds <- predict(mod_logit, type = "response")
+  #Note the following four lines are an attempt to recreate the "circular" jitter that Stata makes, rather than the "rectangular" jitter that R typically makes. Doesn't matter for most applications, but does help make things visually clearer for the following figures.
+tempjitter <- cbind(runif(nrow(dat), 0, 0.1), runif(nrow(dat), 0, 360)*3.1416/180)
+tempjitter <- cbind(tempjitter[,1]*cos(tempjitter[,2]), tempjitter[,1]*sin(tempjitter[,2]))
+dat$x_jitter <- tempjitter[,1]
+dat$y_jitter <- tempjitter[,2]
+
+ggplot(dat) +
+  geom_point(aes(x = female, y = preds, shape = "Observed Rate"), size = 3, color = "blue") +
+  geom_point(aes(x = female + x_jitter, y = cert + y_jitter*0.15), alpha = 0.2, shape = ".") +
+  geom_function(aes(color = "Logistic Fit"), fun = function(x) 1/(1 + exp(-(coef(mod_logit)["(Intercept)"] + coef(mod_logit)["female"]*x))), lwd = 1) +
+  theme(legend.title = element_blank(), legend.position = "bottom") +
+  xlim(c(-5, 5)) + 
+  ylab("Certification Rate") + 
+  xlab("Nonfemale = 0, Female = 1") +
+  ggtitle("logitrange10")
+
+
+ggplot(dat) +
+  geom_point(aes(x = female, y = preds, shape = "Observed Rate"), size = 3, color = "blue") +
+  geom_point(aes(x = female + x_jitter*12, y = cert + y_jitter*0.3), alpha = 0.2, shape = ".") +
+  geom_function(aes(color = "Logistic Fit"), fun = function(x) 1/(1 + exp(-(coef(mod_logit)["(Intercept)"] + coef(mod_logit)["female"]*x))), lwd = 1) +
+  theme(legend.title = element_blank(), legend.position = "bottom") +
+  xlim(c(-50, 10)) + 
+  ylab("Certification Rate") + 
+  xlab("Nonfemale = 0, Female = 1") +
+  ggtitle("logitrange60")
+
+
+ggplot(dat) +
+  geom_point(aes(x = female, y = preds, shape = "Observed Rate"), size = 3, color = "blue") +
+  geom_point(aes(x = female + x_jitter*12, y = cert + y_jitter*0.3), alpha = 0.2, shape = ".") +
+  geom_function(aes(color = "Logistic Fit"), fun = function(x) 1/(1 + exp(-(coef(mod_logit)["(Intercept)"] + coef(mod_logit)["female"]*x))), lwd = 1) +
+  geom_smooth(aes(x = female, y = cert, color = "Linear Probability Model"), method = "lm", se = FALSE, fullrange= TRUE) + 
+  theme(legend.title = element_blank(), legend.position = "bottom") +
+  xlim(c(-50, 10)) + 
+  ylab("Certification Rate") + 
+  xlab("Nonfemale = 0, Female = 1") +
+  ggtitle("logitvslinear")
+```
+
+
+#Q3: Fitting a "linear probability model" without and with heteroskedasticity-robust standard errors
+```{r Q3}
+#default linear model output
+mod_lin <- lm(cert ~ female, data = dat)
+summary(mod_lin)
+
+#robust standard errors output
+coeftest(mod_lin, vcov = vcovHC(mod_lin, type = "HC1"))
+```
+

@@ -1,0 +1,145 @@
+---
+title: |
+  <center> S-052: Intermediate and Advanced Statistical Methods </center>
+  <center> for Applied Educational Research </center>
+  <center> Spring, 2021 </center>
+author: "Sarah Brashear"
+date: "Last Modified: 2/7/21"
+output: html_document
+---
+
+###RQ: Does financial aid cause students to enroll in college?
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+##Load in packages
+```{r packages, warning = FALSE, message = FALSE}
+require(foreign)
+require(stargazer)
+require(survey)
+require(car)
+require(tidyverse)
+```
+
+
+##Define the local directory
+```{r setwd}
+setwd("~/Harvard/RSSS/S052/Spring2021/week3")
+```
+
+
+##Load the data: Data from Dynarski (2003) Does Financial Aid Matter?
+\ Article: https://www.jstor.org/stable/3132174
+\ As discussed by Murnane & Willett (2010) Chapter 8
+\ Available at: https://stats.idre.ucla.edu/stata/examples/methods-matter/chapter8/
+
+```{r importdata}
+dat <- read.dta("Dynarski2003.dta")
+#Can also use the csv version if you prefer, though there are some variable type differences
+
+#Note that to simplify the the following code, rather than tell R each time that the variable yearsr is not a numeric variable, we're just going to create a non-numeric version of the variable yearsr
+dat$yearsr_cat <- as.character(dat$yearsr) #a "character" variable type forces R to think of the values as non-numeric; kind of like football player jersey numbers, you can't add them, they're more like "words"/"characters" than numbers
+
+
+#Establish survey weights where the primary sampling unit is the household ID
+  #Eddie's note: the variable wt88 is not actually a probability weight, the way that the Stata code makes it seem... We need to take the reciprocal to get the actual probability:
+# dat$probweights <- 1/dat$wt88
+# weightdesign_dat <- svydesign(id = ~hhid,
+#                               probs = ~probweights,
+#                               data = dat)
+
+  #Or you can just treat it like a regular weight, which it is...
+weightdesign_dat <- svydesign(id = ~hhid,
+                              weights = ~wt88,
+                              data = dat)
+```
+
+
+##Review Variables
+```{r summaries}
+#Treatment (79-81) and control (82 &83) for eligible group (father deceased) vs. ineligible (father not deceased)
+table(dat$fatherdec, dat$yearsr)
+
+#Mean college enrollment by age 23, by two-way groupings
+dat %>%
+  group_by(fatherdec, yearsr) %>%
+  summarize(meancoll = mean(coll, na.rm = TRUE))
+
+#For the one-way groupings, you can modify the "group_by" option
+dat %>%
+  group_by(fatherdec) %>%
+  summarize(meancoll = mean(coll, na.rm = TRUE))
+```
+
+
+#Question 1: Interpreting raw means
+```{r q1}
+#Ignore for now: Fit a weighted regression model to obtain means in each cell
+
+mod1 <- svyglm(coll ~ yearsr_cat*fatherdec, design = weightdesign_dat, data = dat)
+summary(mod1)
+dat$mod1_preds <- predict(mod1)
+
+#We used the above regression to obtain a graph of probabilities in each cell:
+dat %>%
+  group_by(yearsr, fatherdec) %>%
+  summarize(meancoll = mean(mod1_preds, na.rm = TRUE)) %>%
+  ggplot(aes(x = yearsr, y = meancoll, group = fatherdec, col = fatherdec)) +
+  geom_line() +
+  geom_point() +
+  geom_vline(xintercept = 81.5, col = "red") +
+  ylim(0, 1) +
+  xlab("Year in which a senior") +
+  ylab("Probability of Attending College by Age 23")
+```
+
+
+##Question 2: Effects by group
+```{r q2}
+#Showing that the offer variable is a simple recoding of the year variable where 79, 80, and 81 are 1 and 82 and 83 are 0.
+table(dat$offer, dat$yearsr)
+
+#Using this variable, we can ask whether the policy affected the focal group and also the reference group
+mod2_yes <- svyglm(coll ~ offer, design = weightdesign_dat, subset = fatherdec == "Father deceased")
+mod2_no <- svyglm(coll ~ offer, design = weightdesign_dat, subset = fatherdec == "Father not deceased")
+
+summary(mod2_yes)
+summary(mod2_no)
+```
+
+
+##Question 3: Interaction model
+```{r q3}
+#Now, the interaction model for the differences in differences
+mod3 <- svyglm(coll ~ offer*fatherdec, design = weightdesign_dat)
+dat$mod3_preds <- predict(mod3)
+summary(mod3)
+
+
+#Regression Table
+stargazer(mod2_yes, mod2_no, mod3, type = "text", column.labels = c("Focal", "Reference", "Contrast"), title = "Modeling achievement and socioeconomic status in MA and TX")
+  #Eddie's note: pretty sure this title was a typo, but wouldn't want you R users to feel left out
+
+#Graph of interaction model
+dat %>%
+  group_by(offer, fatherdec) %>%
+  summarize(meancoll = mean(mod3_preds, na.rm = TRUE)) %>%
+  ggplot(aes(x = offer, y = meancoll, group = fatherdec, col = fatherdec)) +
+  geom_line() +
+  geom_point() +
+  ylim(0, 1) +
+  scale_x_continuous(breaks = c(0, 1), limits = c(-.25, 1.25), labels = c("No", "Yes")) +
+  xlab("Offer of Financial Aid") +
+  ylab("Probability of Attending College by Age 23")
+```
+
+
+##Question 4: Linear combination test
+```{r q4}
+#Test whether the effect for the focal group is 0.
+
+linearHypothesis(mod3, "offer + offer:fatherdecFather deceased = 0", test = "F")
+```
